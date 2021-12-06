@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pion/rtcp"
+
 	"github.com/aler9/gortsplib/pkg/base"
 	"github.com/aler9/gortsplib/pkg/headers"
 	"github.com/aler9/gortsplib/pkg/liberrors"
@@ -1092,6 +1094,23 @@ func (ss *ServerSession) writePacketRTP(trackID int, payload []byte) {
 	}
 }
 
+func removeSenderReports(payload []byte) ([]byte, error) {
+	packets, err := rtcp.Unmarshal(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	var outPackets []rtcp.Packet
+
+	for _, pkt := range packets {
+		if _, ok := pkt.(*rtcp.SenderReport); !ok {
+			outPackets = append(outPackets, pkt)
+		}
+	}
+
+	return rtcp.Marshal(outPackets)
+}
+
 // WritePacketRTCP writes a RTCP packet to the session.
 func (ss *ServerSession) WritePacketRTCP(trackID int, payload []byte) {
 	if _, ok := ss.setuppedTracks[trackID]; !ok {
@@ -1109,8 +1128,12 @@ func (ss *ServerSession) WritePacketRTCP(trackID int, payload []byte) {
 		})
 
 	case TransportTCP:
-		channel := ss.setuppedTracks[trackID].tcpChannel
-		channel++
+		payload, err := removeSenderReports(payload)
+		if err != nil {
+			return
+		}
+
+		channel := ss.setuppedTracks[trackID].tcpChannel + 1
 
 		ss.tcpConn.tcpFrameWriteBuffer.Push(&base.InterleavedFrame{
 			Channel: channel,
